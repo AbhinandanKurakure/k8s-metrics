@@ -1,0 +1,5 @@
+{
+    "portType": "tcp",
+    "GRPCPortNo": ":9090",
+    "HTTPPortNo": ":5000"
+}

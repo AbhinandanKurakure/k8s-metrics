@@ -1,0 +1,55 @@
+syntax="proto3";
+
+import "google/api/annotations.proto";
+
+option go_package="clientAPI";
+
+message InputValues{
+    string nameSpace=1;
+}
+
+message OutputValues{
+     string errors=1;
+     repeated string pods=2;
+}
+
+message ListNameSpaceInput{}
+
+message NameSpaceOutput{
+    repeated string nameSpaceList=1;
+}
+
+message CheckPodInput{
+    string nameSpace=1;
+    string podName=2;
+}
+message CheckPodOutput{
+    string checkPodOutput=1;
+}
+
+
+service clientAPIService{
+    rpc ListPods(InputValues) returns (OutputValues){
+        option (google.api.http) = {
+            post: "/v1/example/echo/listPods/{nameSpace}" 
+            body: "*"
+        
+      };
+    }
+    rpc ListNameSpace(ListNameSpaceInput) returns (NameSpaceOutput){
+        option (google.api.http) = {
+            post: "/v1/example/echo/listNameSpaces" 
+            body: "*"
+        
+      };
+    }
+    rpc CheckPod(CheckPodInput) returns (CheckPodOutput){
+        option (google.api.http) = {
+            post: "/v1/example/echo/checkPod/{nameSpace}/{podName}" 
+            body: "*"
+        
+      };
+    }
+}
+
+
