@@ -25,6 +25,13 @@ import (
 
 var kubeConfig *string
 
+//MetricsInterface contains all the methods which are used for metrics purpose
+type MetricsInterface interface {
+	ListPods(ctx context.Context, req *metricspb.InputValues) (*metricspb.OutputValues, error)
+	ListNameSpace(ctx context.Context, in *metricspb.ListNameSpaceInput) (*metricspb.NameSpaceOutput, error)
+	CheckPod(ctx context.Context, req *metricspb.CheckPodInput) (*metricspb.CheckPodOutput, error)
+}
+
 type server struct {
 	GrpcServer *grpc.Server
 	Listener   net.Listener
@@ -62,6 +69,8 @@ func configuration() (string, string) {
 
 func (s *server) CheckPod(ctx context.Context, req *metricspb.CheckPodInput) (*metricspb.CheckPodOutput, error) {
 
+	var result string
+	var flag bool
 	//get the nameSpace and PodName
 	nameSpace := req.GetNameSpace()
 	podName := req.GetPodName()
@@ -71,10 +80,53 @@ func (s *server) CheckPod(ctx context.Context, req *metricspb.CheckPodInput) (*m
 		log.Fatal("Namespace not defined(Empty string)")
 	}
 
-	//checkingPod is function which returns a string which contains whether the pod is present in the mentioned NameSpace or not.
-	isPodPresent := checkingPod(podName, nameSpace)
+	//InClusterConfig returns a config object which uses the service account kubernetes gives to pods.
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		log.Print("failed while obtaining Incluster configuration")
+		//accessing default cluster configuration as InClusterConfig is not available
+		log.Println("accessing default cluster configuration")
+		config, err = clientcmd.BuildConfigFromFlags("", *kubeConfig)
+		if err != nil {
+
+			log.Fatal(err.Error(), " else there no running minikube or any cluster")
+
+		}
+	}
+
+	//create the clientset
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	pods, err := clientset.CoreV1().Pods(nameSpace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	var i int
+	for _, ObtainedpodsList := range pods.Items {
+		podsListName := ObtainedpodsList.GetName()
+
+		for i = 0; i < len(podName); i++ {
+			if podsListName[i] != podName[i] {
+				break
+			}
+		}
+		if i == len(podName) {
+			flag = true
+		}
+
+	}
+
+	if flag == true {
+		result = podName + " is present in the " + nameSpace + " NameSpace"
+	} else {
+		result = podName + " is not present in the " + nameSpace + "NameSpace"
+	}
+
 	res := &metricspb.CheckPodOutput{
-		CheckPodOutput: isPodPresent,
+		CheckPodOutput: result,
 	}
 
 	return res, nil
@@ -91,8 +143,41 @@ func (s *server) ListPods(ctx context.Context, req *metricspb.InputValues) (*met
 		log.Fatal("Namespace not defined(Empty string)")
 	}
 
-	//listingPods function returns the list of pods
-	podLists, err := listingPods(nameSpace)
+	var podSlice []string
+
+	//InClusterConfig returns a config object which uses the service account kubernetes gives to pods.
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		log.Print("failed while obtaining Incluster configuration")
+		//accessing default cluster configuration as InClusterConfig is not available
+		log.Println("accessing default cluster configuration")
+		config, err = clientcmd.BuildConfigFromFlags("", *kubeConfig)
+		if err != nil {
+			log.Fatal(err.Error(), " else there no running minikube or any cluster")
+
+		}
+	}
+
+	//create the clientset
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	//pods contains the list of all the pods available at the given namespace
+	//clientset
+	pods, err := clientset.CoreV1().Pods(nameSpace).List(context.Background(), metav1.ListOptions{})
+
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	//The following code is used for displaying all the pod names
+	for _, items := range pods.Items {
+
+		podSlice = append(podSlice, items.GetName())
+	}
+
 	if err != nil {
 		res := &metricspb.OutputValues{
 			Errors: err.Error(),
@@ -101,7 +186,7 @@ func (s *server) ListPods(ctx context.Context, req *metricspb.InputValues) (*met
 	} else {
 		res := &metricspb.OutputValues{
 			Errors: "",
-			Pods:   podLists,
+			Pods:   podSlice,
 		}
 		return res, nil
 	}
@@ -110,14 +195,41 @@ func (s *server) ListPods(ctx context.Context, req *metricspb.InputValues) (*met
 
 //ListNameSpace function lists all the NameSpace in the given cluster
 func (c *server) ListNameSpace(ctx context.Context, in *metricspb.ListNameSpaceInput) (*metricspb.NameSpaceOutput, error) {
-	nameSpaces, err := listingNameSpace()
 
+	var nameSpaceSlice []string
+	//InClusterConfig returns a config object which uses the service account kubernetes gives to pods.
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		log.Print("failed while obtaining Incluster configuration")
+
+		//accessing default cluster configuration as InClusterConfig is not available
+		log.Println("accessing default cluster configuration")
+		config, err = clientcmd.BuildConfigFromFlags("", *kubeConfig)
+		if err != nil {
+			log.Fatal(err.Error(), " else there no running minikube or any cluster")
+		}
+
+	}
+
+	//create the clientset
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+
+	nameSpace, err := clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
+
+	for _, items := range nameSpace.Items {
+		nameSpaceSlice = append(nameSpaceSlice, items.GetName())
+	}
+
+	//==================================================================================
 	if err != nil {
 		res := &metricspb.NameSpaceOutput{}
 		return res, err
 	} else {
 		res := &metricspb.NameSpaceOutput{
-			NameSpaceList: nameSpaces,
+			NameSpaceList: nameSpaceSlice,
 		}
 		return res, err
 	}
@@ -152,133 +264,6 @@ func main() {
 		log.Fatal("error While Running the Grpc server")
 		os.Exit(1)
 	}
-
-}
-
-func checkingPod(podName string, nameSpace string) string {
-	//InClusterConfig returns a config object which uses the service account kubernetes gives to pods.
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		log.Print("failed while obtaining Incluster configuration")
-		//accessing default cluster configuration as InClusterConfig is not available
-		log.Println("accessing default cluster configuration")
-		config, err = clientcmd.BuildConfigFromFlags("", *kubeConfig)
-		if err != nil {
-
-			log.Fatal(err.Error(), " else there no running minikube or any cluster")
-
-		}
-	}
-
-	//create the clientset
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		log.Fatal(err.Error())
-	}
-	pods, err := clientset.CoreV1().Pods(nameSpace).List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		log.Fatal(err.Error())
-	}
-
-	var i int
-	for _, ObtainedpodsList := range pods.Items {
-		podsListName := ObtainedpodsList.GetName()
-
-		for i = 0; i < len(podName); i++ {
-
-			if podsListName[i] != podName[i] {
-				break
-			}
-
-		}
-		if i == len(podName) {
-			return podName + " is present in the " + nameSpace + " NameSpace"
-		}
-
-	}
-	return podName + " is not present in the " + nameSpace + "NameSpace"
-
-}
-
-func listingPods(nameSpace string) ([]string, error) {
-	var podSlice []string
-
-	//InClusterConfig returns a config object which uses the service account kubernetes gives to pods.
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		log.Print("failed while obtaining Incluster configuration")
-		//accessing default cluster configuration as InClusterConfig is not available
-		log.Println("accessing default cluster configuration")
-		config, err = clientcmd.BuildConfigFromFlags("", *kubeConfig)
-		if err != nil {
-
-			log.Fatal(err.Error(), " else there no running minikube or any cluster")
-			return podSlice, err
-
-		}
-	}
-
-	//create the clientset
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		fmt.Println(err.Error())
-		return podSlice, err
-
-	}
-
-	//pods contains the list of all the pods available at the given namespace
-	//clientset
-	pods, err := clientset.CoreV1().Pods(nameSpace).List(context.Background(), metav1.ListOptions{})
-
-	if err != nil {
-		fmt.Println(err.Error())
-		return podSlice, err
-
-	}
-
-	//The following code is used for displaying all the pod names
-	for _, items := range pods.Items {
-		fmt.Println(items.GetName())
-		podSlice = append(podSlice, items.GetName())
-	}
-
-	return podSlice, nil
-}
-
-func listingNameSpace() ([]string, error) {
-	var nameSpaceSlice []string
-	//InClusterConfig returns a config object which uses the service account kubernetes gives to pods.
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		log.Print("failed while obtaining Incluster configuration")
-
-		//accessing default cluster configuration as InClusterConfig is not available
-		log.Println("accessing default cluster configuration")
-		config, err = clientcmd.BuildConfigFromFlags("", *kubeConfig)
-		if err != nil {
-
-			log.Fatal(err.Error(), " else there no running minikube or any cluster")
-			return nameSpaceSlice, err
-
-		}
-
-	}
-
-	//create the clientset
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		fmt.Println(err.Error())
-		return nameSpaceSlice, err
-
-	}
-
-	nameSpace, err := clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
-
-	for _, items := range nameSpace.Items {
-		nameSpaceSlice = append(nameSpaceSlice, items.GetName())
-	}
-
-	return nameSpaceSlice, err
 
 }
 
